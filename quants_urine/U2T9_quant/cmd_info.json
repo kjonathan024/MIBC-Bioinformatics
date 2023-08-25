@@ -1,0 +1,11 @@
+{
+    "salmon_version": "1.9.0",
+    "index": "hg38_index",
+    "libType": "A",
+    "mates1": "SCRATCH/R1/TH9_R1.fastq.gz",
+    "mates2": "SCRATCH/R2/TH9_R2.fastq.gz",
+    "threads": "8",
+    "validateMappings": [],
+    "output": "quants_regen/TH9_quant",
+    "auxDir": "aux_info"
+}

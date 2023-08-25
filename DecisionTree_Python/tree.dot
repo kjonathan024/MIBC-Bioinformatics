@@ -1,0 +1,9 @@
+digraph Tree {
+node [shape=box, style="filled, rounded", color="black", fontname="helvetica"] ;
+edge [fontname="helvetica"] ;
+0 [label="SDHAF3 <= 4.47\ngini = 0.46\nsamples = 7\nvalue = [7, 4]\nclass = Invasive", fillcolor="#f4c9aa"] ;
+1 [label="gini = 0.0\nsamples = 4\nvalue = [7, 0]\nclass = Invasive", fillcolor="#e58139"] ;
+0 -> 1 [labeldistance=2.5, labelangle=45, headlabel="True"] ;
+2 [label="gini = 0.0\nsamples = 3\nvalue = [0, 4]\nclass = NonInvasive", fillcolor="#399de5"] ;
+0 -> 2 [labeldistance=2.5, labelangle=-45, headlabel="False"] ;
+}

@@ -1,0 +1,25 @@
+SpecimenType,Sample (Original ID),Sample,Patient_ID,Condition,Batch,Location
+Plasma,D1,P1D1,14165,Healthy,1,CTSI
+Plasma,D2,P1D2,14327,Healthy,1,CTSI
+Plasma,D3,P1D3,14542,Healthy,1,CTSI
+Plasma,D4,P1D4,40138,Invasive,1,CTSI
+Plasma,D5,P1D5,40415,Invasive,1,CTSI
+Plasma,D6,P1D6,47149,NonInvasive,1,CTSI
+Plasma,D7,P1D7,95434,AfterTreatment,1,CTSI
+Plasma,D8,P1D8,97261,NonInvasive,1,CTSI
+Urine,C1,U1C1,A00L,NonInvasive,1,Clinic
+Urine,C2,U1C2,A001,NonInvasive,1,Clinic
+Urine,C3,U1C3,A004,NonInvasive,1,Clinic
+Urine,C4,U1C4,B001,Invasive,1,Clinic
+Urine,C5,U1C5,B002,Invasive,1,Clinic
+Urine,C6,U1C6,B003,Invasive,1,Clinic
+Urine,TH1,U2T1,A008,Invasive,2,Clinic
+Urine,TH2,U2T2,A0015,Invasive,2,Clinic
+Urine,TH3,U2T3,A0016,Invasive,2,Clinic
+Urine,TH4,U2T4,B004,Invasive,2,Clinic
+Urine,TH5,U2T5,B005,Invasive,2,Clinic
+Urine,TH6,U2T6,B007,Invasive,2,Clinic
+Urine,TH7,U2T7,B009,Invasive,2,Clinic
+Urine,TH8,U2T8,A005,NonInvasive,2,Clinic
+Urine,TH9,U2T9,A006,NonInvasive,2,Clinic
+Urine,TH10,U2T0,A007,NonInvasive,2,Clinic

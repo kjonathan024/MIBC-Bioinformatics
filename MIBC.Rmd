@@ -1,0 +1,479 @@
+```{r}
+setwd("/Users/jonathankahn/Documents/School/Research/Graim Lab/MIBC Project/Analysis")
+library(DESeq2)
+library(tidyverse)
+library(data.table)
+library(tximport)
+library(org.Hs.eg.db)
+library(EnsDb.Hsapiens.v86)
+library(sva)
+library(M3C)
+library(ComplexHeatmap)
+library(dendsort)
+library(circlize)
+library(reshape2)
+library(ggplot2)
+
+```
+
+```{r}
+# ALL SAMPLES
+metadata <- fread("metadata.csv")
+metadata$Condition <- factor(metadata$Condition)
+metadata$Batch <- factor(metadata$Batch)
+metadata$Location <- factor(metadata$Location)
+
+# Urine Metadata
+urine_metadata <- metadata[metadata$SpecimenType=="Urine",]
+
+# Plasma Metadata
+plasma_metadata <- metadata[metadata$SpecimenType=="Plasma",]
+
+# Import COSMIC Genes for Later
+cosmic.genes <- read.table("COSMIC_bladder_cancer.ids",sep=',', header=FALSE, stringsAsFactors=FALSE)[,1]
+
+files_all <- file.path("quants_regen", list.files("quants_regen"), "quant.sf")
+names(files_all) <- substring(list.files("quants_regen"),1,4) # removes the _quants
+  # Note: U vs P means Urine or Plasma, second digit is the batch, third and fourth is the sample
+    # For any ambiguity, refer to the metadata as it has the original sample names
+
+# For ENSEMBL library:
+edb <- EnsDb.Hsapiens.v86
+tx <- transcripts(edb)
+tx2gene <- data.frame(tx$tx_id, tx$gene_id)
+colnames(tx2gene) <- c("TXNAME", "GENEID")
+```
+
+
+```{r}
+# Load the Data
+txi_all <- tximport(files_all, type = "salmon", tx2gene = tx2gene, ignoreTxVersion = TRUE)
+names(txi_all)
+txi_all.tx <- tximport(files_all, type = "salmon", txOut = TRUE, ignoreTxVersion = TRUE) # transcripts
+txi_all.sum <- summarizeToGene(txi_all.tx, tx2gene, ignoreTxVersion = TRUE) # for creating counts
+all.equal(txi_all$counts, txi_all.sum$counts) # check if equivalent downstream
+
+# Counts Matrix and General Processing
+dat <- as.data.frame(txi_all.sum$counts)
+
+# HUGO Name Conversion
+annot.df <- data.frame("Symbols" = mapIds(org.Hs.eg.db, keys = rownames(dat), column = "SYMBOL", keytype = "ENSEMBL"), dat)
+annot.df$Symbols <- toupper(annot.df$Symbols)
+annot.df <- annot.df[!duplicated(annot.df$Symbols),] # TODO: Think of Alternative Method with this Data Format (median somehow?)
+annot.df <- annot.df[complete.cases(annot.df),]
+rownames(annot.df) <- annot.df$Symbols
+annot.df <- annot.df[,-1]
+dat <- annot.df 
+
+# Adding a Sum Counts Column
+dat$Sum <- apply(dat, MARGIN = 1, FUN = sum, na.rm = TRUE)
+
+# Removing ~ 5636 genes that had less than 10 counts total across all the samples
+    # And Removing Sum Column
+counts <- dat %>%
+  dplyr::filter(Sum >= 10) %>%
+  dplyr::select(-Sum) %>% round()
+
+# Note genes removed for possible later purposes
+removed_data <- dat %>%
+  dplyr::filter(Sum < 10) %>%
+  dplyr::select(-Sum) %>% round()
+
+# Create Log2 Scaled Version for Later
+countsLogScaled <- log2(counts+1)
+
+# And Batch Corrected Version
+all_ComBat_CLS <- as.data.frame(ComBat(as.matrix(countsLogScaled), batch=metadata$Batch), mod = model.matrix(~ Condition, data=metadata))
+
+# Linear Shift
+all_ComBat_CLS <- all_ComBat_CLS - min(all_ComBat_CLS)
+
+
+### Urine Counts Info ###
+urineCLS <- countsLogScaled[,urine_metadata$Sample]
+
+# Batch Correct
+urine_ComBat_CLS <- as.data.frame(ComBat(as.matrix(urineCLS), batch=urine_metadata$Batch), mod = model.matrix(~ Condition, data=urine_metadata))
+
+# Linear Shift
+urine_ComBat_CLS <- urine_ComBat_CLS - min(urine_ComBat_CLS)
+```
+
+```{r}
+# TSNE Plot (All Samples)
+    tsne_result <- tsne(all_ComBat_CLS, perplex = 7)
+    tsne_result$coordinates
+    tsne_df <- data.frame(tsne_result$data, Batch = metadata$Batch, Condition = metadata$Condition, Name = metadata$Sample)
+    
+    # Create a ggplot2 plot and customize the appearance of the points
+    ggplot(tsne_df, aes(x = X1, y = X2, color = Batch, shape = Condition)) +
+      ggtitle("All Samples (Batch Corrected Log Scaled)") +
+      geom_label(data=tsne_df, nudge_y = 11, aes(label=Name)) +
+      geom_point(size = 5) +
+      scale_shape_manual(values = c(16, 17, 15, 14)) +
+      theme_classic()
+    
+    # To Add Text Labels:
+      # geom_label(data=tsne_df, nudge_y = 10, aes(label=Name))
+```
+
+
+```{r}
+# TSNE Plot (Just Urine)
+    tsne_result <- tsne(urine_ComBat_CLS, perplex = 5)
+    tsne_result$coordinates
+    tsne_df <- data.frame(tsne_result$data, Batch = urine_metadata$Batch, Condition = urine_metadata$Condition, Name = urine_metadata$Sample)
+    
+    # Create a ggplot2 plot and customize the appearance of the points
+    ggplot(tsne_df, aes(x = X1, y = X2, color = Batch, shape = Condition)) +
+      ggtitle("Urine Samples (Batch Corrected Log Scaled)") +
+      geom_point(size = 5) +
+      scale_shape_manual(values = c(16, 17, 15, 14)) +
+      theme_classic()
+    
+    # To Add Text Labels:
+      # geom_label(data=tsne_df, nudge_y = 10, aes(label=Name))
+```
+```{r}
+# TSNE Plot (Plasma Samples)
+    tsne_result <- tsne(countsLogScaled[,metadata$SpecimenType=="Plasma"], perplex = 2)
+    tsne_result$coordinates
+    tsne_df <- data.frame(tsne_result$data, Condition = plasma_metadata$Condition, Name = plasma_metadata$Sample)
+    
+    # Create a ggplot2 plot and customize the appearance of the points
+    ggplot(tsne_df, aes(x = X1, y = X2, color = Condition)) +
+      ggtitle("Plasma Samples (Log Scaled)") +
+      geom_point(size = 8) +
+      theme_classic()
+    
+    # To Add Text Labels:
+      # geom_label(data=tsne_df, nudge_y = 10, aes(label=Name))
+```
+
+```{r}
+# Grabbing Urine Quant File Paths
+files_urine <- file.path("quants_urine", list.files("quants_urine"), "quant.sf")
+names(files_urine) <- substring(list.files("quants_urine"),1,4) # removes the _quants
+
+# Load the Data
+txiUrine <- tximport(files_urine, type = "salmon", tx2gene = tx2gene, ignoreTxVersion = TRUE)
+
+# Batch Correct
+urine_ComBat <- as.data.frame(ComBat(as.matrix(txiUrine$counts), batch=urine_metadata$Batch), mod = model.matrix(~ Condition, data=urine_metadata))
+
+# Linear Shift
+urine_ComBat <- urine_ComBat - min(urine_ComBat)
+```
+
+
+
+
+
+```{r fig.height=8}
+# URINE SAMPLES
+
+# Run DESeq
+ counts <- round(as.matrix(urine_ComBat))
+  mode(counts) <- "integer"
+  object <- DESeqDataSetFromMatrix(countData = counts, colData = urine_metadata, 
+    design = ~ Condition)
+#    message("using counts and average transcript lengths from tximport")
+    lengths <- txiUrine$length
+#    stopifnot(all(lengths > 0))
+    dimnames(lengths) <- dimnames(object)
+    assays(object)[["avgTxLength"]] <- lengths
+    
+dds_urine <- DESeq(object)
+res_urine <- results(dds_urine)
+
+# Put into HUGO Names
+urine.df <- data.frame("Symbols" = mapIds(org.Hs.eg.db, keys = rownames(res_urine), column = "SYMBOL", keytype = "ENSEMBL"), res_urine)
+urine.df$Symbols <- toupper(urine.df$Symbols)
+urine.df <- urine.df[!duplicated(urine.df$Symbols),] # TODO: FIND BETTER WAY LATER
+urine.df <- urine.df[complete.cases(urine.df),]
+rownames(urine.df) <- urine.df$Symbols
+urine.df <- urine.df[,-1]
+res_urine <- urine.df
+summary(res_urine)
+
+# Build Volcano Plot
+EnhancedVolcano::EnhancedVolcano(res_urine,lab = rownames(res_urine),x = 'log2FoldChange',y = 'padj',title = 'Urine Samples',pCutoff = 0.05,FCcutoff = 1,pointSize = 3.0,labSize = 6.0)
+
+# Grab Significant Genes
+sigGenesUrine <- res_urine[res_urine$padj < 0.05,]
+
+```
+```{r fig.height=8}
+# PLASMA SAMPLES
+
+# Grabbing Plasma Quant File Paths
+files_plasma <- file.path("quants_plasma", list.files("quants_plasma"), "quant.sf")
+names(files_plasma) <- substring(list.files("quants_plasma"),1,4) # removes the _quants
+
+# Load the Data
+txiPlasma <- tximport(files_plasma, type = "salmon", tx2gene = tx2gene, ignoreTxVersion = TRUE)
+
+# Not Batch Correcting (Plasma Samples all from same batch)
+
+# Run DESeq
+dds_plasma <- DESeqDataSetFromTximport(txiPlasma,plasma_metadata,design = ~ Condition)
+
+          #      counts <- round(as.matrix(all_ComBat_CLS))
+          #      mode(counts) <- "integer"
+          #      object <- DESeqDataSetFromMatrix(countData = counts, colData = plasma_metadata, 
+          #        design = ~ Condition)
+          #        message("using counts and average transcript lengths from tximport")
+          #        lengths <- txiUrine$length
+          #        stopifnot(all(lengths > 0))
+          #        rownames(lengths) <- rownames(object)
+          #        assays(object)[["avgTxLength"]] <- lengths
+    
+dds_plasma <- DESeq(dds_plasma)
+res_plasma <- results(dds_plasma)
+
+# Put into HUGO Names
+plasma.df <- data.frame("Symbols" = mapIds(org.Hs.eg.db, keys = rownames(res_plasma), column = "SYMBOL", keytype = "ENSEMBL"), res_plasma)
+plasma.df$Symbols <- toupper(plasma.df$Symbols)
+plasma.df <- plasma.df[!duplicated(plasma.df$Symbols),] # TODO: FIND BETTER WAY LATER
+plasma.df <- plasma.df[complete.cases(plasma.df),]
+rownames(plasma.df) <- plasma.df$Symbols
+plasma.df <- plasma.df[,-1]
+res_plasma <- plasma.df
+summary(res_plasma)
+
+# Build Volcano Plot
+EnhancedVolcano::EnhancedVolcano(res_plasma,lab = rownames(res_plasma),x = 'log2FoldChange',y = 'padj',title = 'Plasma Samples',pCutoff = 0.05,FCcutoff = 1,pointSize = 3.0,labSize = 6.0)
+
+# Grab Significant Genes
+sigGenesPlasma <- res_plasma[res_plasma$padj < 0.05,]
+
+```
+
+```{r fig.height=8}
+# ALL SAMPLES
+
+# Grabbing All Quant File Paths
+files_all <- file.path("quants_regen", list.files("quants_regen"), "quant.sf")
+names(files_all) <- substring(list.files("quants_regen"),1,4) # removes the _quants
+
+# Load the Data
+txiAll <- tximport(files_all, type = "salmon", tx2gene = tx2gene, ignoreTxVersion = TRUE)
+
+# Batch Correct
+allSamples_ComBat <- as.data.frame(ComBat(as.matrix(txiAll$counts), batch=metadata$Batch), mod = model.matrix(~ Condition, data=metadata))
+
+# Linear Shift
+allSamples_ComBat <- allSamples_ComBat - min(allSamples_ComBat)
+
+# Run DESeq
+ cts <- round(as.matrix(allSamples_ComBat))
+  mode(cts) <- "integer"
+  object <- DESeqDataSetFromMatrix(countData = cts, colData = metadata, 
+    design = ~ Condition)
+#    message("using counts and average transcript lengths from tximport")
+    lengths <- txiAll$length
+#    stopifnot(all(lengths > 0))
+    dimnames(lengths) <- dimnames(object)
+    assays(object)[["avgTxLength"]] <- lengths
+    
+dds_all <- DESeq(object)
+res_all <- results(dds_all)
+
+# Put into HUGO Names
+all.df <- data.frame("Symbols" = mapIds(org.Hs.eg.db, keys = rownames(res_all), column = "SYMBOL", keytype = "ENSEMBL"), res_all)
+all.df$Symbols <- toupper(all.df$Symbols)
+all.df <- all.df[!duplicated(all.df$Symbols),] # TODO: FIND BETTER WAY LATER
+all.df <- all.df[complete.cases(all.df),]
+rownames(all.df) <- all.df$Symbols
+all.df <- all.df[,-1]
+res_all <- all.df
+summary(res_all)
+
+# Build Volcano Plot
+EnhancedVolcano::EnhancedVolcano(res_all,lab = rownames(res_all),x = 'log2FoldChange',y = 'padj',title = 'All Samples',pCutoff = 0.05,FCcutoff = 1,pointSize = 3.0,labSize = 6.0)
+
+# Grab Significant Genes
+sigGenesAll <- res_all[res_all$padj < 0.05,]
+
+```
+
+
+
+```{r fig.height=30, fig.width=8}
+sigUrine <- tibble::rownames_to_column(sigGenesUrine, "Gene")
+sigPlasma <- tibble::rownames_to_column(sigGenesPlasma, "Gene")
+sigAll <- tibble::rownames_to_column(sigGenesAll, "Gene")
+# Combine the three data frames using the bind_rows
+combined_df <- bind_rows(sigUrine, sigPlasma, sigAll)
+# Keep only unique values of "Gene"
+sig <- distinct(combined_df, Gene, .keep_all = TRUE)
+
+sig <- dplyr::arrange(sig, sig$padj)
+
+
+# Urine DiffExpression Heatmap
+ha <- HeatmapAnnotation(Condition = metadata$Condition[metadata$SpecimenType=="Urine"],
+                          Batch = metadata$Batch[metadata$SpecimenType=="Urine"],
+                          col=list(
+                              Batch = c("1" = "blue", "2" = "black"),
+                              Condition = c('NonInvasive' = "gray", 'Invasive' = "purple", 'AfterTreatment' = "green", 'Healthy' = "red")))
+
+ha_top <- HeatmapAnnotation(Specimen = metadata$SpecimenType[metadata$SpecimenType=="Urine"], col = list(Specimen = c('Urine' = 'darkgreen')))
+
+
+heatmap1 <- Heatmap(all_ComBat_CLS[sig$Gene,metadata$SpecimenType=="Urine"], name="Log2 Expr", top_annotation = ha_top, bottom_annotation = ha, col=colorRamp2(c(0, 4, 8), c("blue", "white", "red")))
+draw(heatmap1, column_title = "Differentially Expressed Genes from All Comparisons")
+
+# Plasma DiffExpression Heatmap
+hb <- HeatmapAnnotation(Condition = metadata$Condition[metadata$SpecimenType=="Plasma"],
+                          Batch = metadata$Batch[metadata$SpecimenType=="Plasma"],
+                          col=list(
+                              Batch = c("1" = "blue", "2" = "black"),
+                              Condition = c('NonInvasive' = "gray", 'Invasive' = "purple", 'AfterTreatment' = "green", 'Healthy' = "red")))
+
+hb_top <- HeatmapAnnotation(Specimen = metadata$SpecimenType[metadata$SpecimenType=="Plasma"], col = list(Specimen = c('Plasma' = 'darkred')))
+
+heatmap2 <- Heatmap(all_ComBat_CLS[sig$Gene,metadata$SpecimenType=="Plasma"], name="Log2 Expr", bottom_annotation = hb, top_annotation = hb_top, col=colorRamp2(c(0, 4, 8), c("blue", "white", "red")))
+draw(heatmap2, column_title = "Differentially Expressed Genes from All Comparisons")
+
+# Merged Heatmap
+hm <- heatmap1 + heatmap2
+draw(hm, column_title = "Differentially Expressed Genes from All Comparisons", merge_legends=TRUE)
+
+```
+
+```{r fig.width=10}
+# Additional Plot Generation
+corrs <- cor(all_ComBat_CLS, method = c("spearman")) 
+corrs.melt <- melt(corrs)
+ggplot(corrs.melt, aes(Var1, Var2, fill=value)) + ggtitle("Sample Correlation") + geom_tile() + scale_fill_distiller(palette = "RdYlBu")
+ggplot(corrs.melt, aes(Var1, Var2, fill=value)) + geom_tile() + scale_fill_gradient(low="white", high="steelblue", limits=c(0,1))  # all data
+
+# COSMIC bladder cancer genes 
+genes <- cosmic.genes
+corrs <- cor(all_ComBat_CLS[genes,], method = c("spearman")) 
+corrs.melt <- melt(corrs)
+ggplot(corrs.melt, aes(Var1, Var2, fill=value)) + ggtitle("Spearman Correlation COSMIC Genes Only")+ geom_tile() + scale_fill_distiller(palette = "RdYlBu",limits=c(-1,1))   # correlation heatmap
+#ggsave('HeatmapSpearmanCorrelation_COSMIC_BladderCancerGenesOnly.png',height=7.77,width=9.37)
+
+
+dat.cosmic <- as.matrix(all_ComBat_CLS[genes,])
+dat.melt <- melt(dat.cosmic)
+colnames(dat.melt) <- c('Gene','Sample','value')
+ggplot(dat.melt, aes(Gene, Sample, fill=value)) + ggtitle("COSMIC Bladder Cancer Gene Heatmap (Batch Corrected Log Scaled)") + geom_tile() + scale_fill_distiller(palette = "RdYlBu",limits=c(-10,10))   # expression heatmap
+#ggsave('Heatmap_COSMIC_BladderCancerGenesOnly.png',height=7.77,width=9.37)
+```
+```{r}
+# Heatmap 
+
+# Create Heatmap Annotation for Specimen Type and Condition, also specifying specific coloring for annotation
+column_ha <- HeatmapAnnotation(Specimen=metadata$SpecimenType,Condition=metadata$Condition, col=list(Specimen = c('Urine' = 'darkgreen','Plasma' = 'darkred'), Condition = c('NonInvasive' = "gray", 'Invasive' = "purple", 'AfterTreatment' = "green", 'Healthy' = "red")))
+
+# Create Heatmap Object with Annotation at Bottom
+hm <- Heatmap(dat.cosmic, name = "Log2 Expr", bottom_annotation = column_ha, cluster_columns = dendsort(hclust(dist(t(dat.cosmic)))))
+draw(hm,
+   column_title="COSMIC Bladder Cancer Genes",
+   column_title_gp=grid::gpar(fontsize=16))
+
+
+# Break Original Heatmap into 2 Heatmaps by Specimen Type
+
+# Heatmap Annotation but only on Urine Data (later to be combined)
+column_urine_ha <- HeatmapAnnotation(Specimen=metadata$SpecimenType[metadata$SpecimenType=="Urine"],Condition=metadata$Condition[metadata$SpecimenType=="Urine"], col=list(Specimen = c('Urine' = 'darkgreen'),Condition = c("NonInvasive" = "gray", "Invasive" = "purple")))
+
+# Heatmap Annotation but only on Plasma Data (later to be combined)
+column_plasma_ha <- HeatmapAnnotation(Specimen=metadata$SpecimenType[metadata$SpecimenType=="Plasma"],Condition=metadata$Condition[metadata$SpecimenType=="Plasma"],col=list(Specimen = c('Plasma' = 'darkred'),Condition = c('NonInvasive' = "gray", 'Invasive' = "purple", 'AfterTreatment' = "green", 'Healthy' = "red")))
+
+# This is a workaround method (the conditions for each are generated separately and both titles are still there)
+  ## Figure out if there's a way to fix that!
+ht1 <- Heatmap(dat.cosmic[,metadata$SpecimenType=='Plasma'], name='Log2 Expr', bottom_annotation = column_plasma_ha, cluster_columns = dendsort(hclust(dist(t(dat.cosmic[,metadata$SpecimenType=='Plasma'])))))
+ht2 <- Heatmap(dat.cosmic[,metadata$SpecimenType=='Urine'], name='Log2 Expr', bottom_annotation = column_urine_ha, cluster_columns = dendsort(hclust(dist(t(dat.cosmic[,metadata$SpecimenType=='Urine'])))))
+
+# Combine Heatmaps
+hm2 <- ht2 + ht1
+
+draw(hm2, column_title = "COSMIC Genes Heatmap", merge_legends=TRUE) # add space for titles
+```
+
+```{r}
+# Creating Feature Vector and Labels
+rfSampleData <- as.data.frame(t(all_ComBat_CLS[rownames(all_ComBat_CLS) %in% rownames(sigGenesUrine), ])) %>% tibble::rownames_to_column(., "Sample") %>% as.data.table(.)
+#rfSampleData <- as.data.frame(t(all_ComBat_CLS)) %>% tibble::rownames_to_column(., "Sample") %>% as.data.table(.)
+rfMetadata <- metadata[order(metadata$Sample),]
+rfFeatures <- rfSampleData
+rfSampleData$Condition <- rfMetadata$Condition[rfMetadata$Sample==rfSampleData$Sample]
+rfLabels <- rfSampleData$Condition
+
+# write_csv(rfSampleData, "rfSampleData_DEG_urine.csv")
+
+
+
+```
+
+```{r fig.height=8}
+# Decision Tree Results Heatmap
+
+# Pass in CSV for means of dataset (for use in a heatmap later)
+metadata_means <- fread("metadata_means.csv")
+
+
+# Break Original Heatmap into 2 Heatmaps by Specimen Type
+
+# Heatmap Annotation but only on Urine Data (later to be combined)
+column_urine_ha <- HeatmapAnnotation(Specimen=metadata$SpecimenType[metadata$SpecimenType=="Urine" & metadata$Condition %in% c("NonInvasive","Invasive")],Condition=metadata$Condition[metadata$SpecimenType=="Urine" & metadata$Condition %in% c("NonInvasive","Invasive")], col=list(Specimen = c('Urine' = 'darkgreen'),Condition = c("NonInvasive" = "gray", "Invasive" = "purple")))
+
+# Heatmap Annotation for Mean information
+column_urine_ha2 <- HeatmapAnnotation(Specimen=metadata_means$SpecimenType[metadata_means$SpecimenType=="Urine" & metadata_means$Condition %in% c("NonInvasive","Invasive")],Condition=metadata_means$Condition[metadata_means$SpecimenType=="Urine" & metadata_means$Condition %in% c("NonInvasive","Invasive")], col=list(Specimen = c('Urine' = 'darkgreen'),Condition = c("NonInvasive" = "gray", "Invasive" = "purple")))
+
+# Heatmap Annotation but only on Plasma Data (later to be combined)
+column_plasma_ha <- HeatmapAnnotation(Specimen=metadata$SpecimenType[metadata$SpecimenType=="Plasma" & metadata$Condition %in% c("NonInvasive","Invasive")],Condition=metadata$Condition[metadata$SpecimenType=="Plasma" & metadata$Condition %in% c("NonInvasive","Invasive")],col=list(Specimen = c('Plasma' = 'darkred'),Condition = c('NonInvasive' = "gray", 'Invasive' = "purple")))
+
+# Z-score scale the counts data
+scaledCounts <- scale(all_ComBat_CLS)
+
+# Select Noninvasive Urine columns
+urine_noninv <- metadata$Sample[metadata$Condition=="NonInvasive" & metadata$SpecimenType=="Urine"]
+urine_inv <- metadata$Sample[metadata$Condition=="Invasive" & metadata$SpecimenType=="Urine"]
+
+# Calculate the mean across selected columns
+mean_uinv <- rowMeans(scaledCounts[,urine_inv]) # Invasive
+mean_uninv <- rowMeans(scaledCounts[,urine_noninv]) #NonInvasive
+
+
+# Add the mean values as a new column
+countsWithMeans <- data.frame(scaledCounts) %>%
+  mutate("M_I" = mean_uinv) %>% mutate("M_N" = mean_uninv)
+
+```
+
+```{r}
+
+# Only include genes we identified as possibly good classification features
+subsettedRFDT <- subset(scaledCounts, subset = rownames(scaledCounts) %in% c("UFC1", "SCN4A", "GXYLT2", "ARFIP1", "WNT2", "MAGED4B", "UBR2", "PRKAR1B"))
+subsettedRFDT_Means <- subset(countsWithMeans[,25:26], subset = rownames(countsWithMeans[,25:26]) %in% c("UFC1", "SCN4A", "GXYLT2", "ARFIP1", "WNT2", "MAGED4B", "UBR2", "PRKAR1B"))
+
+# Create Heatmaps for Plasma and Urine based on this subset
+ht1 <- Heatmap(subsettedRFDT[,metadata$SpecimenType=="Plasma" & metadata$Condition %in% c("NonInvasive","Invasive")], name='Z-Scored Expr', bottom_annotation = column_plasma_ha, col=colorRamp2(c(-1.5, 0, 1.5), c("blue", "white", "red")))
+ht2 <- Heatmap(subsettedRFDT[,metadata$SpecimenType=='Urine' & metadata$Condition %in% c("NonInvasive","Invasive")], name='Z-Scored Expr', bottom_annotation = column_urine_ha, col=colorRamp2(c(-1.5, 0, 1.5), c("blue", "white", "red")))
+
+# Mean Heatmap on this subset
+ht3 <- Heatmap(subsettedRFDT_Means,name='Z-Scored Expr',cluster_rows = FALSE, bottom_annotation = column_urine_ha2, col=colorRamp2(c(-1.5, 0, 1.5), c("blue", "white", "red")))
+
+draw(ht3, column_title = "Decision Tree Results Heatmap: Mean Urine Samples")
+
+draw(ht2, column_title = "Decision Tree Results Heatmap: Urine Samples")
+draw(ht1, column_title = "Decision Tree Results Heatmap: Plasma Samples")
+
+# Combine Heatmaps
+hm2 <- ht2 + ht1 # Urine and Plasma
+
+hm3 <- ht3 + ht2 # Urine and Means
+
+draw(hm2, column_title = "Decision Tree Results Heatmap", merge_legends=TRUE) # add space for titles
+
+draw(hm3, column_title = "Urine Decision Tree Results", merge_legends=TRUE) # add space for titles
+```
+
+
+
+

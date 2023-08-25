@@ -1,0 +1,22 @@
+{
+    "read_files": "[ SCRATCH/R1/D1_R1.fastq.gz, SCRATCH/R2/D1_R2.fastq.gz]",
+    "expected_format": "IU",
+    "compatible_fragment_ratio": 1.0,
+    "num_compatible_fragments": 450982,
+    "num_assigned_fragments": 450982,
+    "num_frags_with_concordant_consistent_mappings": 267272,
+    "num_frags_with_inconsistent_or_orphan_mappings": 232243,
+    "strand_mapping_bias": 0.5005163279355862,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 133774,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 133498,
+    "SF": 116076,
+    "SR": 116167,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}
